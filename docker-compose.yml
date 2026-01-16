@@ -1,0 +1,35 @@
+services:
+  okta-socure-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_OKTA_CLIENT_ID: ${VITE_OKTA_CLIENT_ID}
+        VITE_OKTA_ISSUER: ${VITE_OKTA_ISSUER}
+        VITE_SOCURE_SDK_KEY: ${VITE_SOCURE_SDK_KEY}
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_OKTA_TESTING_DISABLEHTTPSCHECK: ${VITE_OKTA_TESTING_DISABLEHTTPSCHECK:-false}
+    container_name: okta-socure-demo
+    restart: unless-stopped
+    ports:
+      - "3050:3050"
+      - "3051:3051"
+    environment:
+      - NODE_ENV=production
+      - PORT=3050
+      - API_PORT=3051
+      - SOCURE_API_KEY=${SOCURE_API_KEY}
+      - SOCURE_BASE_URL=${SOCURE_BASE_URL}
+      - OKTA_API_TOKEN=${OKTA_API_TOKEN}
+      - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

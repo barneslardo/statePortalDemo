@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+.env.local
+.env.production
+npm-debug.log*
+.DS_Store
+README.md
+OKTA_SETUP.md
+deploy.sh
+.vscode
+.idea
+*.tar.gz
