@@ -28,17 +28,26 @@ function Login() {
       baseUrl: baseUrl,
       clientId: import.meta.env.VITE_OKTA_CLIENT_ID,
       redirectUri: `${window.location.origin}/callback`,
-      logo: '/vite.svg',
+      logo: '/state-seal.png',
       authParams: {
         issuer: issuer,
         scopes: ['openid', 'profile', 'email'],
         pkce: true,
         responseType: 'code'
       },
+      // External Identity Providers
+      idps: [
+        { type: 'GOOGLE', id: '0oatw2n3hyZLGWfLv1d7' }
+      ],
+      idpDisplay: 'PRIMARY',
       features: {
         registration: true,
         rememberMe: true,
-        selfServiceUnlock: true
+        selfServiceUnlock: true,
+        selfServicePasswordReset: true,
+        webauthn: false,  // Disabled during registration - users enroll via Account Settings
+        autoPush: true,
+        multiOptionalFactorEnroll: true
       },
       i18n: {
         en: {

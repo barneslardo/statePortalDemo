@@ -38,3 +38,6 @@ Thumbs.db
 
 # MCP Server
 mcp-server/
+
+# Local scripts (Splunk sync, etc.)
+scripts/

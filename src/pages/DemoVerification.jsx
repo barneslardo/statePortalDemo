@@ -4,7 +4,7 @@ import { useOktaAuth } from '@okta/okta-react'
 
 function DemoVerification() {
   const navigate = useNavigate()
-  const { authState, oktaAuth } = useOktaAuth()
+  const { authState } = useOktaAuth()
   const [step, setStep] = useState('intro') // intro, preparing, document, selfie, processing, success, error
   const [error, setError] = useState(null)
 
@@ -36,23 +36,14 @@ function DemoVerification() {
         throw new Error(errorData.error || 'Verification failed')
       }
 
-      // Set sessionStorage for immediate use (before token refresh)
+      // Set sessionStorage for immediate use (token will have updated claim on next login)
       sessionStorage.setItem('identity_verified', 'true')
       sessionStorage.setItem('identity_verified_timestamp', Date.now().toString())
 
       setStep('success')
 
-      // Refresh tokens to get updated claims
-      // This will fetch new tokens with the updated identityVerified claim
-      setTimeout(async () => {
-        try {
-          await oktaAuth.tokenManager.renew('idToken')
-          await oktaAuth.tokenManager.renew('accessToken')
-        } catch (renewError) {
-          console.log('Token renewal note:', renewError.message)
-          // Not critical - sessionStorage fallback will work
-        }
-      }, 1000)
+      // Note: Token renewal is not needed - sessionStorage provides immediate access
+      // The identityVerified claim will be present in the token on next login
 
     } catch (err) {
       console.error('Verification completion error:', err)

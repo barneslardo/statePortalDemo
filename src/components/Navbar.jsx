@@ -14,7 +14,12 @@ function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex items-center">
-            <Link to="/" className="text-xl font-bold">
+            <Link to="/" className="flex items-center text-xl font-bold">
+              <img
+                src="/state-seal.png"
+                alt="State Seal"
+                className="h-10 w-10 mr-3"
+              />
               State Services Portal
             </Link>
           </div>
@@ -26,6 +31,9 @@ function Navbar() {
                 </Link>
                 <Link to="/services" className="hover:text-gray-200 transition">
                   Services
+                </Link>
+                <Link to="/account-settings" className="hover:text-gray-200 transition">
+                  Settings
                 </Link>
                 <span className="text-sm">
                   {authState.idToken?.claims.name || authState.idToken?.claims.email}

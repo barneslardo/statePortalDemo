@@ -53,10 +53,6 @@ function Dashboard() {
               <label className="text-sm font-medium text-gray-500">User ID (sub)</label>
               <p className="text-gray-900 font-mono text-sm break-all">{userInfo.sub || 'N/A'}</p>
             </div>
-            <div>
-              <label className="text-sm font-medium text-gray-500">Email Verified</label>
-              <p className="text-gray-900">{userInfo.email_verified ? 'Yes' : 'No'}</p>
-            </div>
           </div>
         </div>
 
@@ -144,7 +140,7 @@ function Dashboard() {
                 </div>
                 <button
                   onClick={handleStartVerification}
-                  className="px-6 py-3 bg-state-blue text-white rounded-lg font-semibold hover:bg-blue-800 transition flex items-center"
+                  className="px-6 py-3 bg-socure-orange text-white rounded-lg font-semibold hover:opacity-90 transition flex items-center"
                 >
                   <span className="mr-2">Start Verification</span>
                   <span>&#8594;</span>
@@ -159,7 +155,7 @@ function Dashboard() {
                   </div>
                   <button
                     onClick={() => navigate('/demo-verify')}
-                    className="px-6 py-3 bg-socure-orange text-white rounded-lg font-semibold hover:opacity-90 transition flex items-center"
+                    className="px-6 py-3 bg-state-blue text-white rounded-lg font-semibold hover:bg-blue-800 transition flex items-center"
                   >
                     <span className="mr-2">Demo Verification</span>
                     <span>🪪</span>
@@ -193,6 +189,12 @@ function Dashboard() {
                 Access Services
               </button>
             )}
+            <button
+              onClick={() => navigate('/account-settings')}
+              className="px-4 py-2 bg-state-blue text-white rounded-lg hover:bg-blue-800 transition"
+            >
+              Account Settings
+            </button>
             <button
               onClick={() => {
                 sessionStorage.removeItem('identity_verified')

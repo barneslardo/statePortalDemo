@@ -1,512 +1,174 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOktaAuth } from '@okta/okta-react'
+import OktaSignIn from '@okta/okta-signin-widget'
+import '@okta/okta-signin-widget/css/okta-sign-in.min.css'
 
 function MFAChallenge() {
-  const { authState } = useOktaAuth()
+  const { oktaAuth, authState } = useOktaAuth()
   const navigate = useNavigate()
-
-  const [step, setStep] = useState('loading') // loading, select-factor, challenge, verifying, success, error
-  const [factors, setFactors] = useState([])
-  const [selectedFactor, setSelectedFactor] = useState(null)
-  const [verificationCode, setVerificationCode] = useState('')
+  const widgetRef = useRef(null)
+  const containerRef = useRef(null)
   const [error, setError] = useState(null)
-  const [pollInterval, setPollInterval] = useState(null)
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3051'
   const redirectTo = sessionStorage.getItem('mfa_redirect_to') || '/add-dependent'
 
-  // Get user's enrolled MFA factors
-  const loadFactors = useCallback(async () => {
-    try {
-      setStep('loading')
-      setError(null)
-
-      const userId = authState?.idToken?.claims?.sub
-      if (!userId) {
-        setError('Unable to get user information. Please log in again.')
-        setStep('error')
-        return
-      }
-
-      console.log('Loading MFA factors for user:', userId)
-
-      const response = await fetch(`${apiUrl}/api/mfa/factors/${userId}`)
-
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to load MFA factors')
-      }
-
-      const data = await response.json()
-      console.log('Loaded factors:', data.factors)
-
-      if (!data.factors || data.factors.length === 0) {
-        setError('No MFA factors enrolled. Please enroll an authenticator in Okta first.')
-        setStep('error')
-        return
-      }
-
-      setFactors(data.factors)
-      setStep('select-factor')
-
-    } catch (err) {
-      console.error('Error loading factors:', err)
-      setError(err.message || 'Failed to load MFA factors')
-      setStep('error')
-    }
-  }, [authState, apiUrl])
-
-  // Send challenge to selected factor
-  const selectFactor = async (factor) => {
-    try {
-      setError(null)
-      setSelectedFactor(factor)
-
-      const userId = authState?.idToken?.claims?.sub
-
-      // For push-based factors (Okta Verify Push), start polling immediately
-      if (factor.factorType === 'push') {
-        setStep('push-waiting')
-        await sendChallengeAndPoll(userId, factor.id)
-        return
-      }
-
-      // For OTP-based factors, send challenge and show input
-      console.log('Sending challenge for factor:', factor.id)
-
-      const response = await fetch(`${apiUrl}/api/mfa/challenge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, factorId: factor.id })
-      })
-
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to send challenge')
-      }
-
-      const data = await response.json()
-      console.log('Challenge sent:', data)
-
-      setStep('challenge')
-
-    } catch (err) {
-      console.error('Error sending challenge:', err)
-      setError(err.message || 'Failed to send verification challenge')
-      setStep('select-factor')
-    }
-  }
-
-  // Send challenge and poll for push notification result
-  const sendChallengeAndPoll = async (userId, factorId) => {
-    try {
-      // Send the challenge
-      const challengeResponse = await fetch(`${apiUrl}/api/mfa/challenge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, factorId })
-      })
-
-      if (!challengeResponse.ok) {
-        const data = await challengeResponse.json()
-        throw new Error(data.error || 'Failed to send push notification')
-      }
-
-      // Start polling for result
-      const interval = setInterval(async () => {
-        try {
-          const pollResponse = await fetch(`${apiUrl}/api/mfa/challenge`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, factorId })
-          })
-
-          const result = await pollResponse.json()
-          console.log('Push poll result:', result)
-
-          if (result.factorResult === 'SUCCESS') {
-            clearInterval(interval)
-            setPollInterval(null)
-            handleSuccess()
-          } else if (result.factorResult === 'REJECTED' || result.factorResult === 'TIMEOUT') {
-            clearInterval(interval)
-            setPollInterval(null)
-            setError('Push notification was rejected or timed out')
-            setStep('error')
-          }
-          // WAITING - continue polling
-        } catch (err) {
-          console.error('Push poll error:', err)
-        }
-      }, 3000)
-
-      setPollInterval(interval)
-
-      // Timeout after 60 seconds
-      setTimeout(() => {
-        if (pollInterval) {
-          clearInterval(interval)
-          setPollInterval(null)
-          setError('Push notification timed out')
-          setStep('error')
-        }
-      }, 60000)
-
-    } catch (err) {
-      console.error('Push challenge error:', err)
-      setError(err.message)
-      setStep('error')
-    }
-  }
-
-  // Clean up polling on unmount
   useEffect(() => {
-    return () => {
-      if (pollInterval) {
-        clearInterval(pollInterval)
-      }
-    }
-  }, [pollInterval])
+    // Wait for auth state to load
+    if (!authState) return
 
-  // Verify OTP code
-  const submitVerificationCode = async (e) => {
-    e.preventDefault()
-
-    if (!verificationCode.trim()) {
-      setError('Please enter the verification code')
+    // If not authenticated, redirect to login
+    if (!authState.isAuthenticated) {
+      navigate('/login')
       return
     }
 
-    try {
-      setStep('verifying')
-      setError(null)
+    // Don't initialize if we don't have the container
+    if (!containerRef.current) return
 
-      const userId = authState?.idToken?.claims?.sub
+    // Clean up any existing widget
+    if (widgetRef.current) {
+      widgetRef.current.remove()
+      widgetRef.current = null
+    }
 
-      const response = await fetch(`${apiUrl}/api/mfa/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          factorId: selectedFactor.id,
-          passCode: verificationCode.trim()
-        })
-      })
+    // Extract base URL from issuer
+    const issuer = import.meta.env.VITE_OKTA_ISSUER || ''
+    const baseUrl = issuer.replace(/\/oauth2\/.*$/, '')
 
-      const data = await response.json()
-      console.log('Verification result:', data)
-
-      if (!response.ok || !data.success) {
-        setError(data.error || 'Invalid verification code')
-        setStep('challenge')
-        setVerificationCode('')
-        return
+    // Configure widget for step-up MFA
+    const widget = new OktaSignIn({
+      baseUrl: baseUrl,
+      clientId: import.meta.env.VITE_OKTA_CLIENT_ID,
+      redirectUri: `${window.location.origin}/mfa-callback`,
+      logo: '/state-seal.png',
+      authParams: {
+        issuer: issuer,
+        scopes: ['openid', 'profile', 'email'],
+        pkce: true,
+        responseType: 'code',
+        // Request step-up MFA
+        acrValues: 'urn:okta:loa:2fa:any'
+      },
+      // Force re-authentication to trigger MFA
+      prompt: 'login',
+      features: {
+        rememberMe: false,
+        // Enable WebAuthn/biometric
+        webauthn: true
+      },
+      i18n: {
+        en: {
+          'primaryauth.title': 'Additional Verification Required',
+          'primaryauth.username.placeholder': 'Email Address'
+        }
+      },
+      colors: {
+        brand: '#1e3a5f'
       }
+    })
 
-      handleSuccess()
+    widgetRef.current = widget
 
-    } catch (err) {
-      console.error('Verification error:', err)
-      setError(err.message || 'Verification failed')
-      setStep('challenge')
-      setVerificationCode('')
+    // Render the widget
+    widget.showSignInAndRedirect({
+      el: containerRef.current,
+      scopes: ['openid', 'profile', 'email'],
+      acrValues: 'urn:okta:loa:2fa:any'
+    }).catch((err) => {
+      console.error('Sign-in widget error:', err)
+      if (err.message !== 'User closed the widget') {
+        setError(err.message || 'Failed to initialize verification')
+      }
+    })
+
+    // Cleanup
+    return () => {
+      if (widgetRef.current) {
+        try {
+          widgetRef.current.remove()
+        } catch (e) {
+          // Widget may already be removed
+        }
+        widgetRef.current = null
+      }
     }
-  }
+  }, [authState, navigate, oktaAuth])
 
-  // Resend challenge
-  const resendCode = async () => {
-    if (selectedFactor) {
-      await selectFactor(selectedFactor)
-    }
-  }
-
-  // Handle successful MFA
-  const handleSuccess = () => {
-    setStep('success')
-
-    sessionStorage.setItem('mfa_verified', 'true')
-    sessionStorage.setItem('mfa_timestamp', Date.now().toString())
-    sessionStorage.removeItem('mfa_redirect_to')
-
-    setTimeout(() => {
-      navigate(redirectTo)
-    }, 1500)
-  }
-
-  // Cancel and go back
   const handleCancel = () => {
-    if (pollInterval) {
-      clearInterval(pollInterval)
+    if (widgetRef.current) {
+      try {
+        widgetRef.current.remove()
+      } catch (e) {
+        // Ignore
+      }
     }
+    sessionStorage.removeItem('mfa_redirect_to')
     navigate('/dashboard')
   }
 
-  // Load factors on mount
-  useEffect(() => {
-    if (authState?.isAuthenticated) {
-      loadFactors()
-    }
-  }, [authState, loadFactors])
-
-  // Get factor icon
-  const getFactorIcon = (factor) => {
-    switch (factor.factorType) {
-      case 'push':
-        return '📱'
-      case 'sms':
-        return '💬'
-      case 'email':
-        return '📧'
-      case 'token:software:totp':
-      case 'token:hotp':
-        return '🔐'
-      case 'question':
-        return '❓'
-      case 'webauthn':
-        return '🔑'
-      default:
-        return '🔑'
-    }
-  }
-
-  // Get factor display name
-  const getFactorName = (factor) => {
-    switch (factor.factorType) {
-      case 'push':
-        return 'Okta Verify Push'
-      case 'sms':
-        return `SMS (${factor.profile?.phoneNumber || 'Phone'})`
-      case 'email':
-        return `Email (${factor.profile?.email || 'Email'})`
-      case 'token:software:totp':
-        if (factor.provider === 'OKTA') {
-          return 'Okta Verify TOTP'
-        }
-        return 'Authenticator App'
-      case 'token:hotp':
-        return 'Hardware Token'
-      case 'question':
-        return 'Security Question'
-      case 'webauthn':
-        return 'Security Key / Biometric'
-      default:
-        return factor.factorType
-    }
-  }
-
-  // Get challenge instructions
-  const getChallengeInstructions = () => {
-    if (!selectedFactor) return 'Enter your verification code'
-
-    switch (selectedFactor.factorType) {
-      case 'sms':
-        return `Enter the code sent to ${selectedFactor.profile?.phoneNumber || 'your phone'}`
-      case 'email':
-        return `Enter the code sent to ${selectedFactor.profile?.email || 'your email'}`
-      case 'token:software:totp':
-        return 'Enter the code from your authenticator app'
-      default:
-        return 'Enter your verification code'
-    }
-  }
-
-  // Render content based on step
-  const renderContent = () => {
-    switch (step) {
-      case 'loading':
-        return (
-          <div className="text-center">
-            <div className="animate-spin h-12 w-12 border-4 border-state-blue border-t-transparent rounded-full mx-auto mb-4"></div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Loading Verification Options
-            </h2>
-            <p className="text-gray-600">
-              Please wait...
-            </p>
-          </div>
-        )
-
-      case 'select-factor':
-        return (
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2 text-center">
-              Additional Verification Required
-            </h2>
-            <p className="text-gray-600 mb-6 text-center">
-              Select how you'd like to verify your identity
-            </p>
-            <div className="space-y-3">
-              {factors.map((factor) => (
-                <button
-                  key={factor.id}
-                  onClick={() => selectFactor(factor)}
-                  className="w-full flex items-center p-4 border-2 border-gray-200 rounded-lg hover:border-state-blue hover:bg-blue-50 transition"
-                >
-                  <span className="text-2xl mr-4">{getFactorIcon(factor)}</span>
-                  <div className="text-left">
-                    <div className="font-medium text-gray-800">
-                      {getFactorName(factor)}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {factor.provider}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )
-
-      case 'challenge':
-        return (
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2 text-center">
-              Enter Verification Code
-            </h2>
-            <p className="text-gray-600 mb-6 text-center">
-              {getChallengeInstructions()}
-            </p>
-            <form onSubmit={submitVerificationCode} className="space-y-4">
-              <input
-                type="text"
-                value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))}
-                placeholder="Enter code"
-                className="w-full px-4 py-3 text-center text-2xl tracking-widest border-2 border-gray-200 rounded-lg focus:border-state-blue focus:outline-none"
-                maxLength={6}
-                autoFocus
-                inputMode="numeric"
-              />
-              <button
-                type="submit"
-                className="w-full py-3 bg-state-blue text-white rounded-lg font-semibold hover:bg-blue-800 transition"
-              >
-                Verify
-              </button>
-            </form>
-            {(selectedFactor?.factorType === 'sms' || selectedFactor?.factorType === 'email') && (
-              <button
-                onClick={resendCode}
-                className="w-full mt-3 text-state-blue hover:underline text-sm"
-              >
-                Resend code
-              </button>
-            )}
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full text-center">
+          <div className="text-red-500 text-5xl mb-4">⚠</div>
+          <h2 className="text-xl font-semibold text-gray-800 mb-2">
+            Verification Error
+          </h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <div className="space-y-2">
             <button
-              onClick={() => {
-                setSelectedFactor(null)
-                setVerificationCode('')
-                setStep('select-factor')
-              }}
-              className="w-full mt-2 text-gray-500 hover:text-gray-700 text-sm"
+              onClick={() => window.location.reload()}
+              className="w-full py-2 bg-state-blue text-white rounded-lg hover:bg-blue-800 transition"
             >
-              Choose a different method
+              Try Again
+            </button>
+            <button
+              onClick={handleCancel}
+              className="w-full py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+            >
+              Cancel
             </button>
           </div>
-        )
-
-      case 'push-waiting':
-        return (
-          <div className="text-center">
-            <div className="text-6xl mb-4">📱</div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Push Notification Sent
-            </h2>
-            <p className="text-gray-600 mb-4">
-              Open Okta Verify on your device and approve the request
-            </p>
-            <div className="animate-pulse flex justify-center space-x-2 mb-4">
-              <div className="h-3 w-3 bg-state-blue rounded-full"></div>
-              <div className="h-3 w-3 bg-state-blue rounded-full"></div>
-              <div className="h-3 w-3 bg-state-blue rounded-full"></div>
-            </div>
-            <button
-              onClick={() => {
-                if (pollInterval) clearInterval(pollInterval)
-                setPollInterval(null)
-                setSelectedFactor(null)
-                setStep('select-factor')
-              }}
-              className="text-gray-500 hover:text-gray-700 text-sm"
-            >
-              Choose a different method
-            </button>
-          </div>
-        )
-
-      case 'verifying':
-        return (
-          <div className="text-center">
-            <div className="animate-spin h-12 w-12 border-4 border-state-blue border-t-transparent rounded-full mx-auto mb-4"></div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Verifying...
-            </h2>
-          </div>
-        )
-
-      case 'success':
-        return (
-          <div className="text-center">
-            <div className="text-green-500 text-6xl mb-4">✓</div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Verification Complete
-            </h2>
-            <p className="text-gray-600">
-              Redirecting...
-            </p>
-          </div>
-        )
-
-      case 'error':
-        return (
-          <div className="text-center">
-            <div className="text-red-500 text-5xl mb-4">⚠</div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Verification Failed
-            </h2>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <div className="space-y-2">
-              <button
-                onClick={loadFactors}
-                className="w-full py-2 bg-state-blue text-white rounded-lg hover:bg-blue-800 transition"
-              >
-                Try Again
-              </button>
-              <button
-                onClick={handleCancel}
-                className="w-full py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )
-
-      default:
-        return null
-    }
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
-        {error && step !== 'error' && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-            {error}
-          </div>
-        )}
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 py-12 px-4">
+      <div className="max-w-md mx-auto">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold text-state-blue mb-2">
+            Additional Verification Required
+          </h1>
+          <p className="text-gray-600">
+            Please verify your identity to continue
+          </p>
+        </div>
 
-        {renderContent()}
+        {/* Okta Sign-In Widget Container */}
+        <div
+          ref={containerRef}
+          id="okta-mfa-widget"
+          className="bg-white rounded-lg shadow-lg overflow-hidden"
+        />
 
-        {step !== 'success' && step !== 'error' && step !== 'loading' && step !== 'verifying' && (
+        {/* Cancel button */}
+        <div className="mt-4 text-center">
           <button
             onClick={handleCancel}
-            className="w-full mt-6 text-gray-500 hover:text-gray-700 text-sm"
+            className="text-gray-500 hover:text-gray-700 text-sm"
           >
             Cancel and go back
           </button>
-        )}
+        </div>
+
+        {/* Footer */}
+        <div className="mt-6 text-center text-sm text-gray-500">
+          <p>Secure verification powered by Okta</p>
+        </div>
       </div>
     </div>
   )

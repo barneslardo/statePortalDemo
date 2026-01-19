@@ -12,7 +12,7 @@ A demonstration web application showcasing Okta authentication with Google socia
   - SNAP Assistance
   - Vehicle Registration
 - **User Profile Display** showing access token claims
-- **Docker Deployment** ready for Blue infrastructure
+- **Docker Deployment** ready for production
 
 ## Tech Stack
 
@@ -35,7 +35,8 @@ A demonstration web application showcasing Okta authentication with Google socia
 ### 1. Clone and Install
 
 ```bash
-cd ~/okta-socure-demo
+git clone https://github.com/barneslardo/statePortalDemo.git
+cd statePortalDemo
 npm install
 ```
 
@@ -85,21 +86,9 @@ npm run serve
 
 Visit http://localhost:3050
 
-## Deployment to Blue
+## Docker Deployment
 
-### Docker Deployment
-
-```bash
-# Make deployment script executable
-chmod +x deploy.sh
-
-# Deploy to Blue server
-./deploy.sh
-```
-
-The app will be available at: http://192.168.1.111:3050
-
-### Manual Docker Deployment
+### Build and Run
 
 ```bash
 # Build image with environment variables
@@ -107,17 +96,17 @@ docker build \
   --build-arg VITE_OKTA_CLIENT_ID="your_client_id" \
   --build-arg VITE_OKTA_ISSUER="your_issuer" \
   --build-arg VITE_SOCURE_SDK_KEY="your_sdk_key" \
-  -t okta-socure-demo:latest .
+  -t state-portal-demo:latest .
 
 # Run container
 docker run -d \
-  --name okta-socure-demo \
+  --name state-portal-demo \
   --restart unless-stopped \
   -p 3050:3050 \
-  okta-socure-demo:latest
+  state-portal-demo:latest
 ```
 
-### Docker Compose Deployment
+### Docker Compose
 
 ```bash
 # Set environment variables
@@ -143,7 +132,7 @@ docker-compose up -d
 ## Project Structure
 
 ```
-okta-socure-demo/
+statePortalDemo/
 ├── src/
 │   ├── components/
 │   │   ├── Navbar.jsx              # Navigation with logout
@@ -164,67 +153,8 @@ okta-socure-demo/
 ├── Dockerfile                       # Multi-stage build
 ├── docker-compose.yml              # Container orchestration
 ├── web-server.js                   # Production server
-├── deploy.sh                       # Deployment automation
 └── package.json                    # Dependencies
 ```
-
-## MCP Server Integration
-
-This project includes a **Model Context Protocol (MCP) server** that enables Claude to manage and monitor the application directly.
-
-### Features
-
-With the MCP server, Claude can:
-
-- ✅ Check application deployment status on Blue server
-- ✅ View and analyze Docker container logs
-- ✅ Restart the application remotely
-- ✅ Verify Okta configuration
-- ✅ Access setup documentation
-- ✅ Test connectivity to deployment environment
-- ✅ Provide deployment checklists and guidance
-
-### Quick Setup
-
-1. **Install MCP server dependencies:**
-   ```bash
-   cd mcp-server
-   npm install
-   ```
-
-2. **Configure Claude Desktop:**
-
-   Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-   ```json
-   {
-     "mcpServers": {
-       "okta-socure-demo": {
-         "command": "node",
-         "args": [
-           "/Users/skylar/okta-socure-demo/mcp-server/index.js"
-         ]
-       }
-     }
-   }
-   ```
-
-3. **Restart Claude Desktop**
-
-### Usage Examples
-
-Once configured, you can ask Claude:
-
-- "Check the status of the okta-socure demo app"
-- "Show me the last 50 logs from the container"
-- "Is my Okta configuration set up correctly?"
-- "Restart the demo application on Blue"
-- "What's the deployment URL?"
-
-### Documentation
-
-- **[MCP Server README](./mcp-server/README.md)** - Complete MCP server documentation
-- **[MCP Setup Guide](./mcp-server/MCP_SETUP.md)** - Step-by-step installation instructions
 
 ## Available Scripts
 
@@ -237,19 +167,19 @@ Once configured, you can ask Claude:
 
 ```bash
 # View logs
-docker logs -f okta-socure-demo
+docker logs -f state-portal-demo
 
 # Restart container
-docker restart okta-socure-demo
+docker restart state-portal-demo
 
 # Stop container
-docker stop okta-socure-demo
+docker stop state-portal-demo
 
 # Remove container
-docker stop okta-socure-demo && docker rm okta-socure-demo
+docker stop state-portal-demo && docker rm state-portal-demo
 
 # View container status
-docker ps | grep okta-socure-demo
+docker ps | grep state-portal-demo
 ```
 
 ## Environment Variables
@@ -303,7 +233,7 @@ This application includes demo/simulation features:
 ### Container Won't Start
 ```bash
 # Check logs
-ssh skylar@192.168.1.111 "docker logs okta-socure-demo"
+docker logs state-portal-demo
 
 # Common issues:
 # - Port 3050 already in use

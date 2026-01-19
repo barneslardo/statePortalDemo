@@ -5,11 +5,11 @@ set -e
 echo "===== Okta + Socure Demo Deployment ====="
 echo ""
 
-# Configuration
-SERVER_USER="skylar"
-SERVER_HOST="192.168.1.111"
-APP_NAME="okta-socure-demo"
-CONTAINER_NAME="okta-socure-demo"
+# Configuration - UPDATE THESE FOR YOUR ENVIRONMENT
+SERVER_USER="your_username"
+SERVER_HOST="your_server_ip"
+APP_NAME="state-portal-demo"
+CONTAINER_NAME="state-portal-demo"
 PORT="3050"
 
 # Colors
@@ -18,6 +18,12 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
+
+# Check configuration
+if [ "$SERVER_HOST" == "your_server_ip" ]; then
+    echo -e "${RED}Error: Please configure SERVER_HOST and SERVER_USER in deploy.sh${NC}"
+    exit 1
+fi
 
 # Check .env.local exists
 if [ ! -f .env.local ]; then
@@ -39,34 +45,34 @@ echo -e "${BLUE}[2/6]${NC} Saving Docker image..."
 docker save ${APP_NAME}:latest | gzip > ${APP_NAME}.tar.gz
 
 # Step 3: Upload to server
-echo -e "${BLUE}[3/6]${NC} Uploading to Blue server..."
+echo -e "${BLUE}[3/6]${NC} Uploading to server..."
 scp ${APP_NAME}.tar.gz ${SERVER_USER}@${SERVER_HOST}:/tmp/
 
 # Step 4: Deploy on server
 echo -e "${BLUE}[4/6]${NC} Deploying on server..."
-ssh ${SERVER_USER}@${SERVER_HOST} << 'ENDSSH'
+ssh ${SERVER_USER}@${SERVER_HOST} << ENDSSH
     cd /tmp
 
     # Load image
     echo "Loading Docker image..."
-    docker load < okta-socure-demo.tar.gz
+    docker load < ${APP_NAME}.tar.gz
 
     # Stop and remove existing container
     echo "Stopping existing container..."
-    docker stop okta-socure-demo 2>/dev/null || true
-    docker rm okta-socure-demo 2>/dev/null || true
+    docker stop ${CONTAINER_NAME} 2>/dev/null || true
+    docker rm ${CONTAINER_NAME} 2>/dev/null || true
 
     # Start new container
     echo "Starting new container..."
     docker run -d \
-      --name okta-socure-demo \
+      --name ${CONTAINER_NAME} \
       --restart unless-stopped \
-      -p 3050:3050 \
+      -p ${PORT}:${PORT} \
       -e NODE_ENV=production \
-      okta-socure-demo:latest
+      ${APP_NAME}:latest
 
     # Cleanup
-    rm okta-socure-demo.tar.gz
+    rm ${APP_NAME}.tar.gz
 
     echo "Container started successfully"
 ENDSSH

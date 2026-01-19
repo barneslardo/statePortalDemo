@@ -5,6 +5,7 @@ import { useOktaAuth } from '@okta/okta-react'
 function AddDependent() {
   const navigate = useNavigate()
   const { authState } = useOktaAuth()
+  const [checkingMfa, setCheckingMfa] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [childInfo, setChildInfo] = useState({
@@ -18,27 +19,63 @@ function AddDependent() {
   const parentId = authState?.idToken?.claims.sub
   const parentEmail = authState?.idToken?.claims.email
 
-  // Check if MFA was verified (within last 5 minutes)
+  // Check if user has MFA factors and if MFA was verified
   useEffect(() => {
-    const mfaVerified = sessionStorage.getItem('mfa_verified')
-    const mfaTimestamp = sessionStorage.getItem('mfa_timestamp')
+    const checkMfaStatus = async () => {
+      if (!parentId) return
 
-    if (!mfaVerified || !mfaTimestamp) {
-      navigate('/mfa-challenge')
-      return
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3051'
+
+      try {
+        // First check if user has any MFA factors enrolled
+        const factorsResponse = await fetch(`${apiUrl}/api/user/${parentId}/factors`)
+        if (factorsResponse.ok) {
+          const factorsData = await factorsResponse.json()
+          const activeFactors = factorsData.factors?.filter(f => f.status === 'ACTIVE') || []
+
+          if (activeFactors.length === 0) {
+            // No factors enrolled - redirect to secure account to enroll
+            sessionStorage.setItem('post_enrollment_redirect', '/add-dependent')
+            navigate('/secure-account')
+            return
+          }
+        }
+
+        // User has factors - check if MFA was recently verified
+        const mfaVerified = sessionStorage.getItem('mfa_verified')
+        const mfaTimestamp = sessionStorage.getItem('mfa_timestamp')
+
+        if (!mfaVerified || !mfaTimestamp) {
+          sessionStorage.setItem('mfa_redirect_to', '/add-dependent')
+          navigate('/mfa-challenge')
+          return
+        }
+
+        // Check if MFA verification is still valid (5 minute window)
+        const elapsed = Date.now() - parseInt(mfaTimestamp)
+        const fiveMinutes = 5 * 60 * 1000
+
+        if (elapsed > fiveMinutes) {
+          sessionStorage.removeItem('mfa_verified')
+          sessionStorage.removeItem('mfa_token')
+          sessionStorage.removeItem('mfa_timestamp')
+          sessionStorage.setItem('mfa_redirect_to', '/add-dependent')
+          navigate('/mfa-challenge')
+          return
+        }
+
+        // MFA check passed - allow access to the form
+        setCheckingMfa(false)
+      } catch (err) {
+        console.error('Error checking MFA status:', err)
+        // On error, be safe and require MFA
+        sessionStorage.setItem('mfa_redirect_to', '/add-dependent')
+        navigate('/mfa-challenge')
+      }
     }
 
-    // Check if MFA verification is still valid (5 minute window)
-    const elapsed = Date.now() - parseInt(mfaTimestamp)
-    const fiveMinutes = 5 * 60 * 1000
-
-    if (elapsed > fiveMinutes) {
-      sessionStorage.removeItem('mfa_verified')
-      sessionStorage.removeItem('mfa_token')
-      sessionStorage.removeItem('mfa_timestamp')
-      navigate('/mfa-challenge')
-    }
-  }, [navigate])
+    checkMfaStatus()
+  }, [navigate, parentId])
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
@@ -132,6 +169,18 @@ function AddDependent() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Show loading state while checking MFA
+  if (checkingMfa) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin h-10 w-10 border-4 border-state-blue border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-600">Verifying security status...</p>
+        </div>
+      </div>
+    )
   }
 
   return (

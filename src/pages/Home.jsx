@@ -29,9 +29,17 @@ function Home() {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-gray-100 px-4">
       <div className="max-w-2xl text-center space-y-8">
         <div className="space-y-4">
+          <img
+            src="/state-seal.png"
+            alt="State of Fictitious Seal"
+            className="w-32 h-32 mx-auto"
+          />
           <h1 className="text-5xl font-bold text-state-blue">
-            State Services Portal
+            State of Fictitious
           </h1>
+          <h2 className="text-2xl font-semibold text-gray-700">
+            Services Portal
+          </h2>
           <p className="text-xl text-gray-600">
             Secure access to government services with identity verification
           </p>

@@ -1,14 +1,46 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import fs from 'fs'
+import path from 'path'
 
 dotenv.config({ path: '.env.local' })
+
+// Socure logging for Splunk
+const SOCURE_LOG_PATH = process.env.SOCURE_LOG_PATH || '/var/log/socure/socure.log'
+
+const logSocureEvent = (eventType, data) => {
+  try {
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      eventType,
+      ...data
+    }
+    const logLine = JSON.stringify(logEntry) + '\n'
+
+    // Ensure directory exists
+    const logDir = path.dirname(SOCURE_LOG_PATH)
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true })
+    }
+
+    fs.appendFileSync(SOCURE_LOG_PATH, logLine)
+  } catch (err) {
+    console.error('Failed to write Socure log:', err.message)
+  }
+}
 
 const app = express()
 const PORT = process.env.API_PORT || 3051
 
-// Helper to extract Okta domain from issuer URL
+// Get Okta API domain for management API calls
+// Uses OKTA_API_DOMAIN if set, otherwise extracts from issuer
 const getOktaDomain = () => {
+  // Prefer explicit API domain (needed when using custom domain for auth)
+  if (process.env.OKTA_API_DOMAIN) {
+    return process.env.OKTA_API_DOMAIN
+  }
+  // Fallback to extracting from issuer
   const issuer = process.env.VITE_OKTA_ISSUER || ''
   const match = issuer.match(/https?:\/\/([^/]+)/)
   return match ? match[1] : null
@@ -58,6 +90,12 @@ app.post('/api/socure/token', async (req, res) => {
     if (!socureResponse.ok) {
       const errorText = await socureResponse.text()
       console.error('Socure API error:', socureResponse.status, errorText)
+      logSocureEvent('docv_session_error', {
+        userId,
+        email,
+        status: socureResponse.status,
+        error: errorText
+      })
       return res.status(socureResponse.status).json({
         error: 'Failed to create Socure session',
         details: errorText
@@ -65,6 +103,14 @@ app.post('/api/socure/token', async (req, res) => {
     }
 
     const socureData = await socureResponse.json()
+
+    // Log successful session creation
+    logSocureEvent('docv_session_created', {
+      userId,
+      email,
+      sessionId: socureData.referenceId || userId,
+      transactionToken: socureData.data?.docvTransactionToken ? '[PRESENT]' : '[MISSING]'
+    })
 
     console.log('Socure DocV response:', JSON.stringify(socureData, null, 2))
 
@@ -112,10 +158,22 @@ app.get('/api/socure/status/:sessionId', async (req, res) => {
     })
 
     if (!socureResponse.ok) {
+      logSocureEvent('docv_status_error', {
+        sessionId,
+        status: socureResponse.status
+      })
       return res.status(socureResponse.status).json({ error: 'Failed to get verification status' })
     }
 
     const data = await socureResponse.json()
+
+    // Log status check result
+    logSocureEvent('docv_status_checked', {
+      sessionId,
+      documentVerifyResult: data.documentVerification?.decision || 'unknown',
+      referenceId: data.referenceId
+    })
+
     res.json(data)
 
   } catch (error) {
@@ -165,11 +223,24 @@ app.post('/api/user/verify', async (req, res) => {
     if (!updateResponse.ok) {
       const errorText = await updateResponse.text()
       console.error('Failed to update user verification status:', errorText)
+      logSocureEvent('identity_verification_failed', {
+        userId,
+        reason: 'okta_update_failed',
+        error: errorText
+      })
       return res.status(500).json({ error: 'Failed to update verification status in Okta' })
     }
 
     const updatedUser = await updateResponse.json()
     console.log('Updated user', userId, 'identityVerified=true, verifiedDate=', verifiedDate)
+
+    // Log successful identity verification
+    logSocureEvent('identity_verification_completed', {
+      userId,
+      email: updatedUser.profile?.email,
+      verifiedDate: verifiedDate,
+      status: 'success'
+    })
 
     res.json({
       success: true,
@@ -277,6 +348,50 @@ app.post('/api/mfa/challenge', async (req, res) => {
 
   } catch (error) {
     console.error('Error sending MFA challenge:', error)
+    res.status(500).json({ error: 'Internal server error', message: error.message })
+  }
+})
+
+// Poll for push notification result (doesn't send new push)
+app.post('/api/mfa/poll', async (req, res) => {
+  try {
+    const { pollUrl } = req.body
+
+    if (!pollUrl) {
+      return res.status(400).json({ error: 'pollUrl is required' })
+    }
+
+    const oktaApiToken = process.env.OKTA_API_TOKEN
+
+    if (!oktaApiToken) {
+      return res.status(500).json({ error: 'Okta not configured' })
+    }
+
+    // Poll the Okta transaction URL
+    const response = await fetch(pollUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `SSWS ${oktaApiToken}`,
+        'Accept': 'application/json'
+      }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('Failed to poll MFA status:', errorText)
+      return res.status(response.status).json({ error: 'Failed to poll MFA status' })
+    }
+
+    const result = await response.json()
+    console.log('MFA poll result:', result.factorResult)
+
+    res.json({
+      factorResult: result.factorResult,
+      _links: result._links
+    })
+
+  } catch (error) {
+    console.error('Error polling MFA status:', error)
     res.status(500).json({ error: 'Internal server error', message: error.message })
   }
 })
@@ -656,6 +771,15 @@ app.post('/api/dependents/complete-verification', async (req, res) => {
     const updatedChild = await updateChildResponse.json()
     console.log('Updated child', childId, 'identityVerified=true, verifiedDate=', verifiedDate)
 
+    // Log dependent verification completion
+    logSocureEvent('dependent_verification_completed', {
+      childId,
+      parentId,
+      childEmail: updatedChild.profile?.email,
+      verifiedDate: verifiedDate,
+      status: 'success'
+    })
+
     // 2. Get parent's current dependents array
     const parentResponse = await fetch(`https://${oktaDomain}/api/v1/users/${parentId}`, {
       headers: {
@@ -761,6 +885,210 @@ app.get('/api/dependents/:parentId', async (req, res) => {
 
   } catch (error) {
     console.error('Error getting dependents:', error)
+    res.status(500).json({ error: 'Internal server error', message: error.message })
+  }
+})
+
+// ============================================
+// USER SETTINGS / FACTORS ENDPOINTS
+// ============================================
+
+// Get user's enrolled and available factors for account settings
+app.get('/api/user/:userId/factors', async (req, res) => {
+  try {
+    const { userId } = req.params
+
+    const oktaApiToken = process.env.OKTA_API_TOKEN
+    const oktaDomain = getOktaDomain()
+
+    if (!oktaApiToken || !oktaDomain) {
+      return res.status(500).json({ error: 'Okta not configured' })
+    }
+
+    // Get enrolled factors
+    const enrolledResponse = await fetch(`https://${oktaDomain}/api/v1/users/${userId}/factors`, {
+      headers: {
+        'Authorization': `SSWS ${oktaApiToken}`,
+        'Accept': 'application/json'
+      }
+    })
+
+    if (!enrolledResponse.ok) {
+      const errorText = await enrolledResponse.text()
+      console.error('Failed to get enrolled factors:', errorText)
+      return res.status(enrolledResponse.status).json({ error: 'Failed to get enrolled factors' })
+    }
+
+    const enrolledFactors = await enrolledResponse.json()
+
+    // Get available factors for enrollment
+    const catalogResponse = await fetch(`https://${oktaDomain}/api/v1/users/${userId}/factors/catalog`, {
+      headers: {
+        'Authorization': `SSWS ${oktaApiToken}`,
+        'Accept': 'application/json'
+      }
+    })
+
+    let availableFactors = []
+    if (catalogResponse.ok) {
+      availableFactors = await catalogResponse.json()
+    }
+
+    // Format enrolled factors
+    const factors = enrolledFactors.map(f => ({
+      id: f.id,
+      factorType: f.factorType,
+      provider: f.provider,
+      status: f.status,
+      profile: f.profile
+    }))
+
+    // Format available factors (not yet enrolled)
+    const enrolledTypes = enrolledFactors.map(f => f.factorType)
+    const available = availableFactors
+      .filter(f => !enrolledTypes.includes(f.factorType))
+      .map(f => ({
+        factorType: f.factorType,
+        provider: f.provider,
+        status: f.status
+      }))
+
+    console.log('User', userId, 'has', factors.length, 'enrolled factors,', available.length, 'available')
+
+    res.json({ factors, availableFactors: available })
+
+  } catch (error) {
+    console.error('Error getting user factors:', error)
+    res.status(500).json({ error: 'Internal server error', message: error.message })
+  }
+})
+
+// Start WebAuthn factor enrollment
+app.post('/api/factors/webauthn/enroll', async (req, res) => {
+  try {
+    const { userId } = req.body
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' })
+    }
+
+    const oktaApiToken = process.env.OKTA_API_TOKEN
+    const oktaDomain = getOktaDomain()
+
+    if (!oktaApiToken || !oktaDomain) {
+      return res.status(500).json({ error: 'Okta not configured' })
+    }
+
+    // Start WebAuthn enrollment
+    const response = await fetch(`https://${oktaDomain}/api/v1/users/${userId}/factors`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `SSWS ${oktaApiToken}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        factorType: 'webauthn',
+        provider: 'FIDO'
+      })
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error('WebAuthn enrollment start failed:', response.status, errorData)
+      return res.status(response.status).json({
+        error: errorData.errorSummary || 'Failed to start WebAuthn enrollment',
+        details: errorData
+      })
+    }
+
+    const factor = await response.json()
+    console.log('WebAuthn enrollment started for user', userId, 'factor:', factor.id)
+
+    // Extract activation data for the browser
+    const activation = factor._embedded?.activation
+    if (!activation) {
+      return res.status(500).json({ error: 'No activation data returned from Okta' })
+    }
+
+    res.json({
+      factorId: factor.id,
+      status: factor.status,
+      activation: {
+        challenge: activation.challenge,
+        user: activation.user,
+        rp: activation.rp,  // Use Okta's RP ID for proper attestation validation
+        pubKeyCredParams: activation.pubKeyCredParams || [
+          { type: 'public-key', alg: -7 },  // ES256
+          { type: 'public-key', alg: -257 } // RS256
+        ],
+        authenticatorSelection: activation.authenticatorSelection || {
+          authenticatorAttachment: 'platform',
+          userVerification: 'preferred',
+          residentKey: 'preferred'
+        },
+        attestation: activation.attestation || 'direct',
+        excludeCredentials: activation.excludeCredentials || []
+      }
+    })
+
+  } catch (error) {
+    console.error('Error starting WebAuthn enrollment:', error)
+    res.status(500).json({ error: 'Internal server error', message: error.message })
+  }
+})
+
+// Complete WebAuthn factor enrollment
+app.post('/api/factors/webauthn/activate', async (req, res) => {
+  try {
+    const { userId, factorId, attestation, clientData } = req.body
+
+    if (!userId || !factorId || !attestation || !clientData) {
+      return res.status(400).json({ error: 'Missing required parameters' })
+    }
+
+    const oktaApiToken = process.env.OKTA_API_TOKEN
+    const oktaDomain = getOktaDomain()
+
+    if (!oktaApiToken || !oktaDomain) {
+      return res.status(500).json({ error: 'Okta not configured' })
+    }
+
+    // Activate the WebAuthn factor
+    const response = await fetch(`https://${oktaDomain}/api/v1/users/${userId}/factors/${factorId}/lifecycle/activate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `SSWS ${oktaApiToken}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        attestation: attestation,
+        clientData: clientData
+      })
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error('WebAuthn activation failed:', response.status, errorData)
+      return res.status(response.status).json({
+        error: errorData.errorSummary || 'Failed to activate WebAuthn factor',
+        details: errorData
+      })
+    }
+
+    const activatedFactor = await response.json()
+    console.log('WebAuthn factor activated for user', userId, 'factor:', factorId)
+
+    res.json({
+      success: true,
+      factorId: activatedFactor.id,
+      status: activatedFactor.status,
+      profile: activatedFactor.profile
+    })
+
+  } catch (error) {
+    console.error('Error activating WebAuthn factor:', error)
     res.status(500).json({ error: 'Internal server error', message: error.message })
   }
 })

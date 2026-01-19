@@ -21,6 +21,8 @@ import ChildSupport from './pages/ChildSupport'
 import SNAPAssistance from './pages/SNAPAssistance'
 import VehicleRegistration from './pages/VehicleRegistration'
 import DemoVerification from './pages/DemoVerification'
+import AccountSettings from './pages/AccountSettings'
+import SecureAccount from './pages/SecureAccount'
 
 const oktaAuth = new OktaAuth(oktaConfig)
 
@@ -49,6 +51,14 @@ function AppWithRouter() {
           <Route path="/login" element={<Login />} />
           <Route path="/callback" element={<Callback />} />
           <Route
+            path="/secure-account"
+            element={
+              <ProtectedRoute>
+                <SecureAccount />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/dashboard"
             element={
               <ProtectedRoute>
@@ -69,6 +79,14 @@ function AppWithRouter() {
             element={
               <ProtectedRoute>
                 <DemoVerification />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/account-settings"
+            element={
+              <ProtectedRoute>
+                <AccountSettings />
               </ProtectedRoute>
             }
           />
